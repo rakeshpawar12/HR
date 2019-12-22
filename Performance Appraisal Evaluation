@@ -1,0 +1,341 @@
+# HR
+
+df<- read.csv(file.choose(),header = TRUE)
+str(df)
+summary(df)
+df<-data.frame(df)
+
+#change data type and fill missing value
+df$awards_won.<-factor(df$awards_won.,levels = c(1,0))
+df$education[df$education=='']<-"Bachelor's"
+df$education<-factor(droplevels(df$education))
+df$previous_year_rating<-ifelse(is.na(df$previous_year_rating),3,df$previous_year_rating)
+df$previous_year_rating<-as.factor(df$previous_year_rating)
+df$KPIs_met..80.<-factor(df$KPIs_met..80.,levels = c(1,0))
+
+str(df)
+summary(df)
+
+df$is_promoted=as.factor(ifelse(df$is_promoted=="0","no","yes"))
+df$is_promoted<-factor(df$is_promoted,levels = c("yes","no"))
+
+#crosstable
+library(gmodels)
+CrossTable(df$gender,df$education,prop.r = F,
+           prop.chisq = T,chisq = T,
+           format = "SPSS",digits = 1)
+
+CrossTable(df$gender,df$previous_year_rating,prop.r = F,
+           prop.chisq = T,chisq = T,
+           format = "SPSS",digits = 1)
+
+CrossTable(df$education,df$previous_year_rating,prop.r = F,
+           prop.chisq = T,chisq = T,
+           format = "SPSS",digits = 1)
+
+#split the data into train and test data
+set.seed(123)
+rno<-sample(nrow(df),nrow(df)*.7)
+
+trn<-df[rno,]
+tst<-df[-rno,]
+str(trn$is_promoted)
+
+trn$is_promoted=as.factor(ifelse(trn$is_promoted=="0","no","yes"))
+tst$is_promoted<-as.factor(ifelse(tst$is_promoted=="0","no","yes"))
+# change level
+trn$is_promoted<-factor(trn$is_promoted,levels = c("yes","no"))
+tst$is_promoted<-factor(tst$is_promoted,levels = c("yes","no"))
+
+###########################################
+#SVM model
+library(e1071)
+svmmodel<-svm(is_promoted~.,data = trn ,karnel= 'linear',metric="ROC",probability=T)
+svmmodel
+
+#checking train accuracy
+y_pred<-predict(svmmodel,newdata = df)
+str(y_pred)
+library(caret)
+#confusion matrix
+svmACC<-confusionMatrix(y_pred,df$is_promoted)
+svmACC     
+
+str(df$is_promoted)
+
+#checking ROC curve
+y_predROC<-predict(svmmodel,newdata = df,probability = T)
+str(y_predROC)
+s<-attr(y_predROC,"probabilities")
+s
+library(pROC)
+dev.new()
+plot.roc(df$is_promoted,s[,1],
+         print.auc=T,
+         main="Linear-CV") 
+
+################
+
+#Checking accuracy for test data
+y_predT<-predict(svmmodel,newdata = tst)
+str(y_predT)
+library(caret)
+svmTacc<-confusionMatrix(y_predT,tst$is_promoted)
+svmTacc 
+#ROC of test
+y_predTROC<-predict(svmmodel,newdata = tst,probability = T)
+st<-attr(y_predTROC,"probabilities")
+
+library(pROC)
+dev.new()
+plot.roc(tst$is_promoted,st[,2],
+         print.auc=T,
+         main="Linear-CV") 
+
+###########################################################
+#new model
+#LOGISTIC MODEL
+ctrl<-trainControl(method = "repeatedcv",
+                   number = 5,
+                   repeats = 5,
+                   classProbs = TRUE,
+                   savePredictions = TRUE)
+ctrl2<-trainControl(classProbs = TRUE,
+                    savePredictions = TRUE)
+logcv<-train(is_promoted~.,data = trn,method="glm",family="binomial",trControl=ctrl,
+             metric="ROC")
+logcv
+log<-train(is_promoted~.,
+           data = trn,
+           method="glm",family="binomial",
+           trControl=ctrl2)
+log
+
+library(car)
+vif(svmmodel)
+
+#predict for CM
+logpredcv<-predict(logcv,newdata = tst)
+logpred<-predict(log,newdata = tst)
+logpred
+logCmcv<-confusionMatrix(logpredcv,tst$is_promoted)
+logCmcv #accuracy is 93.36% and kappa is 0.3807
+logCm<-confusionMatrix(logpred,tst$is_promoted)
+logCm 
+
+#for roc curve
+logpredcvROC<-predict(logcv,newdata = tst,type = "prob")
+logpredROC<-predict(log,newdata = tst, type = "prob")
+
+plot.roc(tst$is_promoted,logpredcvROC$yes,
+         print.auc=T,
+         main="Linear-CV") 
+
+
+plot.roc(tst$is_promoted,logpredROC$yes,
+         print.auc=T,
+         main="Linear-CV")
+
+logistic<-glm(is_promoted~.,data=trn,family = "binomial")
+summary(logistic)
+
+###################
+#model evaluation for logistic without cross-validation
+log1<-train(is_promoted~.-employee_id -region -gender,
+           data = trn,
+           method="glm",family="binomial",
+           trControl=ctrl2)
+
+logpred1<-predict(log1,newdata = tst)
+
+logCm1<-confusionMatrix(logpred1,tst$is_promoted)
+logCm1 
+
+#model evaluation for logistic with cross-validation
+logcv1<-train(is_promoted~. -employee_id -region -gender,
+             data = trn,method="glm",family="binomial",trControl=ctrl,
+             metric="ROC")
+
+logpredcv1<-predict(logcv1,newdata = tst)
+
+logCmcv1<-confusionMatrix(logpredcv1,tst$is_promoted)
+logCmcv1 
+
+#for roc curve
+logpredcvROC1<-predict(logcv1,newdata = tst,type = "prob")
+logpredROC1<-predict(log1,newdata = tst, type = "prob")
+
+plot.roc(tst$is_promoted,logpredcvROC1$yes,
+         print.auc=T,
+         main="Linear-CV")
+
+
+plot.roc(tst$is_promoted,logpredROC1$yes,
+         print.auc=T,
+         main="Linear-CV") 
+
+######################################
+library(rpart)
+fit<-rpart(is_promoted~.,data=trn,method="class",
+           control = rpart.control(minsplit = 4))
+fit
+library(rpart.plot)
+dev.new()
+rpart.plot(fit)
+
+
+library(rattle)
+fancyRpartPlot(fit,type=4)
+#check accuracy
+fit_predict <-predict(fit, tst, type = 'class')
+fit_predict
+fitACC<-confusionMatrix(fit_predict,tst$is_promoted)
+fitACC 
+
+#for ROC
+fit_predictRoc <-predict(fit, newdata=tst, type = 'prob')
+fit_predictRoc
+fit_ROC<-roc(tst$is_promoted,fit_predictRoc[,2])
+fit_ROC 
+
+dev.new()
+plot.roc(tst$is_promoted,fit_predictRoc[,'no'],
+         print.auc=T)
+
+######################################
+#decision tree with cross-valiadtion
+trctrl<-trainControl(method = "repeatedcv",
+                     number = 5,repeats = 2,
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE)
+
+dtree_fit<-train(is_promoted~.,data=trn,
+                  method="rpart",parms = list(split="gini"),
+                  trControl=trctrl,metric="ROC")
+dtree_fit
+
+dev.new()
+prp(dtree_fit$finalModel,box.palette = "Red",tweak =1)
+  
+test_pred<-predict(dtree_fit,newdata = tst)
+confusionMatrix(test_pred,tst$is_promoted) #accuracy is 0.9311 and kappa is 0.3055
+
+test_pred_prob<-predict(dtree_fit, newdata = tst,
+                         type = "prob")
+library(pROC)
+
+rpartROC<-roc(tst$is_promoted,test_pred_prob$yes)
+rpartROC   
+dev.new()
+plot.roc(tst$is_promoted,test_pred_prob[,'no'],
+         print.auc=T)
+
+
+###################################
+#decision tree model evaluation
+imp1<-varImp(dtree_fit)
+imp1
+dev.new()
+plot(imp1,main="info")
+
+dtree_fit1<-train(is_promoted~ avg_training_score + KPIs_met..80. 
+                 + awards_won. + previous_year_rating 
+                 + department,data=trn,
+                 method="rpart",parms = list(split="gini"),
+                 trControl=trctrl,metric="ROC")
+dtree_fit1
+
+test_pred1<-predict(dtree_fit1,newdata = tst)
+confusionMatrix(test_pred1,tst$is_promoted)
+
+#for ROC
+test_pred_prob1<-predict(dtree_fit1, newdata = tst,
+                        type = "prob")
+library(pROC)
+rpartROC1<-roc(tst$is_promoted,test_pred_prob1$yes)
+rpartROC1   
+dev.new()
+plot.roc(tst$is_promoted,test_pred_prob1[,'no'],
+         print.auc=T)
+
+##############################
+imp2<-varImp(fit)
+
+fit1<-rpart(is_promoted~ avg_training_score + awards_won. + KPIs_met..80. 
+           + previous_year_rating + region,data=trn,method="class",
+           control = rpart.control(minsplit = 4))
+fit1
+
+fit_predict1 <-predict(fit1, tst, type = 'class')
+fit_predict1
+fitACC1<-confusionMatrix(fit_predict1,tst$is_promoted)
+fitACC1  
+#####################################
+# NEW MODEL
+#RAMDON FOREST 
+library(caret)
+library(randomForest)
+regressor1 = randomForest(x = trn[-14],
+                         y = trn$is_promoted,
+                         ntree = 500)
+
+y_predRandom1 = predict(regressor1, newdata=tst)
+ranCmcv1<-confusionMatrix(y_predRandom1,tst$is_promoted)
+ranCmcv1  
+
+#FOR ROC curve
+library(pROC)
+y_predRandomRoc1 = predict(regressor1, newdata=tst,type="prob")
+randomFROC1<-roc(tst$is_promoted,y_predRandomRoc1[,"yes"])
+randomFROC1  
+dev.new()
+plot.roc(tst$is_promoted,y_predRandomRoc1[,'no'],
+         print.auc=T)
+
+###############
+regressor2 = randomForest(x = trn[-14],
+                         y = trn$is_promoted,
+                         ntree = 750)
+
+y_predRandom2 = predict(regressor2, newdata=tst)
+ranCmcv2<-confusionMatrix(y_predRandom2,tst$is_promoted)
+ranCmcv2
+
+
+#FOR ROC curve
+library(pROC)
+y_predRandomRoc2 = predict(regressor2, newdata=tst,type="prob")
+randomFROC2<-roc(tst$is_promoted,y_predRandomRoc2[,"yes"])
+randomFROC2 
+dev.new()
+plot.roc(tst$is_promoted,y_predRandomRoc2[,'no'],
+         print.auc=T)
+
+########################################
+#best model for further predication
+regressor2 = randomForest(x = trn[-14],
+                          y = trn$is_promoted,
+                          ntree = 750)
+#########################################
+#import test file
+df1<-read.csv(file.choose(),header = T)
+str(df1)
+summary(df1)
+
+#change data type and missing values
+df1$education[df1$education==""]<-"Bachelor's"
+df1$education<-factor(droplevels(df1$education))
+df1$previous_year_rating<-ifelse(is.na(df1$previous_year_rating),3,df1$previous_year_rating)
+df1$previous_year_rating<-as.factor(df1$previous_year_rating)
+str(df1)
+df1$awards_won.<-as.factor(df1$awards_won.)
+df1$awards_won.<-factor(df1$awards_won.,levels = c("1","0"))
+df1$KPIs_met..80.<-factor(df1$KPIs_met..80.,levels = c("1","0"))
+
+
+library(caret)
+rfTST<-predict(regressor,newdata=df1)
+df1$preprob<-predict(log,df1,type = "prob")
+df1$prob<-ifelse(df1$preprob>0.5,"1","0")
+
+which(df1$prob>0.5)
